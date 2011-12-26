@@ -1,0 +1,536 @@
+diff -urN PTAM-r114-linux/Build/Linux/Makefile PTAM/Build/Linux/Makefile
+--- PTAM-r114-linux/Build/Linux/Makefile	2009-07-15 00:05:11.000000000 +0900
++++ PTAM/Build/Linux/Makefile	2010-10-13 00:38:56.000000000 +0900
+@@ -4,11 +4,13 @@
+ # Edit the lines below to point to any needed include and link paths
+ # Or to change the compiler's optimization flags
+ CC = g++
+-COMPILEFLAGS = -I MY_CUSTOM_INCLUDE_PATH -D_LINUX -D_REENTRANT -Wall  -O3 -march=nocona -msse3
+-LINKFLAGS = -L MY_CUSTOM_LINK_PATH -lGVars3 -lcvd
++# COMPILEFLAGS = -I MY_CUSTOM_INCLUDE_PATH -D_LINUX -D_REENTRANT -Wall  -O3 -march=nocona -msse3
++# LINKFLAGS = -L MY_CUSTOM_LINK_PATH -lGVars3 -lcvd
++COMPILEFLAGS = -D_LINUX -D_REENTRANT -Wall  -O3 -march=nocona -msse3 -I/usr/include/opencv-2.3.1
++LINKFLAGS = -L/usr/local/lib -lGVars3 -lcvd -lopencv_legacy -lopencv_core -lopencv_video -lopencv_highgui
+ 
+ # Edit this line to change video source
+-VIDEOSOURCE = VideoSource_Linux_DV.o
++VIDEOSOURCE = VideoSource_Linux_OpenCV.o
+ 
+ OBJECTS=	main.o\
+ 		GLWindow2.o\
+diff -urN PTAM-r114-linux/Build/Linux/Makefile.r114 PTAM/Build/Linux/Makefile.r114
+--- PTAM-r114-linux/Build/Linux/Makefile.r114	1970-01-01 09:00:00.000000000 +0900
++++ PTAM/Build/Linux/Makefile.r114	2009-07-15 00:05:11.000000000 +0900
+@@ -0,0 +1,73 @@
++# DO NOT DELETE THIS LINE -- make depend depends on it.
++
++
++# Edit the lines below to point to any needed include and link paths
++# Or to change the compiler's optimization flags
++CC = g++
++COMPILEFLAGS = -I MY_CUSTOM_INCLUDE_PATH -D_LINUX -D_REENTRANT -Wall  -O3 -march=nocona -msse3
++LINKFLAGS = -L MY_CUSTOM_LINK_PATH -lGVars3 -lcvd
++
++# Edit this line to change video source
++VIDEOSOURCE = VideoSource_Linux_DV.o
++
++OBJECTS=	main.o\
++		GLWindow2.o\
++		GLWindowMenu.o\
++		$(VIDEOSOURCE)\
++		System.o \
++		ATANCamera.o\
++		KeyFrame.o\
++		MapPoint.o\
++		Map.o\
++		SmallBlurryImage.o\
++		ShiTomasi.o \
++		HomographyInit.o \
++		MapMaker.o \
++		Bundle.o \
++		PatchFinder.o\
++		Relocaliser.o\
++		MiniPatch.o\
++		MapViewer.o\
++		ARDriver.o\
++		EyeGame.o\
++		Tracker.o
++
++CALIB_OBJECTS=	GLWindow2.o\
++		GLWindowMenu.o\
++		$(VIDEOSOURCE)\
++		CalibImage.o \
++		CalibCornerPatch.o\
++		ATANCamera.o \
++		CameraCalibrator.o
++
++All: PTAM CameraCalibrator
++
++PTAM: $(OBJECTS)
++	$(CC) -o PTAM $(OBJECTS) $(LINKFLAGS)
++
++CameraCalibrator:$(CALIB_OBJECTS)
++	$(CC) -o CameraCalibrator $(CALIB_OBJECTS) $(LINKFLAGS)
++
++
++%.o: %.cc
++	$(CC) $< -o $@ -c $(COMPILEFLAGS)
++
++clean:
++	rm *.o
++
++
++depend:
++	rm dependecies; touch dependencies
++	makedepend -fdependencies $(INCLUDEFLAGS) $(MOREINCS) *.cc *.h
++
++
++-include dependencies
++
++
++
++
++
++
++
++
++
+diff -urN PTAM-r114-linux/Build/Linux/VideoSource_Linux_OpenCV.cc PTAM/Build/Linux/VideoSource_Linux_OpenCV.cc
+--- PTAM-r114-linux/Build/Linux/VideoSource_Linux_OpenCV.cc	1970-01-01 09:00:00.000000000 +0900
++++ PTAM/Build/Linux/VideoSource_Linux_OpenCV.cc	2010-10-13 00:38:56.000000000 +0900
+@@ -0,0 +1,107 @@
++/*
++* Autor : Arnaud GROSJEAN (VIDE SARL)
++* This implementation of VideoSource allows to use OpenCV as a source for the video input
++* I did so because libCVD failed getting my V4L2 device
++*
++* INSTALLATION :
++* - Copy the VideoSource_Linux_OpenCV.cc file in your PTAM directory
++* - In the Makefile:
++*	- set the linkflags to
++	LINKFLAGS = -L MY_CUSTOM_LINK_PATH -lblas -llapack -lGVars3 -lcvd -lcv -lcxcore -lhighgui
++*	- set the videosource to 
++	VIDEOSOURCE = VideoSource_Linux_OpenCV.o
++* - Compile the project
++* - Enjoy !
++* 
++* Notice this code define two constants for the image width and height (OPENCV_VIDEO_W and OPENCV_VIDEO_H)
++*/
++
++#include "VideoSource.h"
++#include <cvd/Linux/v4lbuffer.h>
++#include <cvd/colourspace_convert.h>
++#include <cvd/colourspaces.h>
++#include <gvars3/instances.h>
++#include <opencv2/imgproc/imgproc.hpp>
++#include <opencv2/features2d/features2d.hpp>
++#include <opencv2/video/tracking.hpp>
++#include <opencv2/highgui/highgui.hpp>
++#include <opencv2/legacy/legacy.hpp>
++#include <opencv2/legacy/compat.hpp>
++
++#include <iostream>
++#include <sstream>
++
++using namespace CVD;
++using namespace std;
++using namespace GVars3;
++using namespace cv;
++
++#define OPENCV_VIDEO_W 640
++#define OPENCV_VIDEO_H 480
++
++// 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++extern string kmd_cameraname;
++
++VideoSource::VideoSource()
++{
++  cout << "  VideoSource_Linux: Opening video source..." << endl;
++
++  // 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++  // I want to be a fluent C++ speaker ...
++  mptr = new VideoCapture();
++  if (kmd_cameraname == "") {
++    mptr = new VideoCapture(0); // default camera device
++  } else {
++    int kmdcamnum = -1;
++    stringstream(kmd_cameraname) >> kmdcamnum; // try to find number
++    if (kmdcamnum >= 0)
++      mptr = new VideoCapture(kmdcamnum); // by device number
++    else
++      mptr = new VideoCapture(kmd_cameraname); // by url/video-file
++  }
++
++  VideoCapture* cap = (VideoCapture*)mptr;
++  if(!cap->isOpened()){
++    cerr << "Unable to get the camera " << kmd_cameraname << endl;
++    exit(-1);
++  }
++
++  cout << "  ... got video source." << endl;
++  mirSize = ImageRef(OPENCV_VIDEO_W, OPENCV_VIDEO_H);
++};
++
++ImageRef VideoSource::Size()
++{ 
++  return mirSize;
++};
++
++void conversionNB(Mat frame, Image<byte> &imBW){
++	Mat clone = frame.clone();
++	Mat_<Vec3b>& frame_p = (Mat_<Vec3b>&)clone;
++	for (int i = 0; i < OPENCV_VIDEO_H; i++){
++		for (int j = 0; j < OPENCV_VIDEO_W; j++){	
++		imBW[i][j] = (frame_p(i,j)[0] + frame_p(i,j)[1] + frame_p(i,j)[2]) / 3;
++		}
++	}
++
++}
++
++void conversionRGB(Mat frame, Image<Rgb<byte> > &imRGB){
++	Mat clone = frame.clone();
++	Mat_<Vec3b>& frame_p = (Mat_<Vec3b>&)clone;
++	for (int i = 0; i < OPENCV_VIDEO_H; i++){
++		for (int j = 0; j < OPENCV_VIDEO_W; j++){	
++		imRGB[i][j].red = frame_p(i,j)[2];
++		imRGB[i][j].green = frame_p(i,j)[1];
++		imRGB[i][j].blue = frame_p(i,j)[0];
++		}
++	}
++}
++
++void VideoSource::GetAndFillFrameBWandRGB(Image<byte> &imBW, Image<Rgb<byte> > &imRGB)
++{
++Mat frame;
++VideoCapture* cap = (VideoCapture*)mptr;
++*cap >> frame;
++  conversionNB(frame, imBW);
++  conversionRGB(frame, imRGB);
++}
++
++
+diff -urN PTAM-r114-linux/CHANGELOG_kmd.txt PTAM/CHANGELOG_kmd.txt
+--- PTAM-r114-linux/CHANGELOG_kmd.txt	1970-01-01 09:00:00.000000000 +0900
++++ PTAM/CHANGELOG_kmd.txt	2010-10-13 01:44:11.000000000 +0900
+@@ -0,0 +1,13 @@
++(See CHANGELOG.txt too)
++------------------------------------------------------------------------
++Based on r114 | Yoshinari Kameda | 2010-10-13 01:42 JST | see-below
++  (1) Tested only on Linux / Ubuntu 10.04LTS with OpenCV 2.1.0
++  (2) Handle OpenCV video input (thanks to Arnaud GROSJEAN)
++  (3) make a switch option to call glDrawPixels(,, GL_RGB,,)
++  (4) make a switch option of glEnable(GL_LIGHTING)
++Patch and document should be available at
++http://www.kameda-lab.org/_local/imagelab.tsukuba.ac.jp/ubuntu1004+opencv21/PTAMk/index-e.html
++------------------------------------------------------------------------
++
++  
++
+diff -urN PTAM-r114-linux/CalibImage.cc PTAM/CalibImage.cc
+--- PTAM-r114-linux/CalibImage.cc	2009-05-12 00:37:58.000000000 +0900
++++ PTAM/CalibImage.cc	2010-10-13 00:38:56.000000000 +0900
+@@ -17,6 +17,9 @@
+ using namespace CVD;
+ using namespace GVars3;
+ 
++// 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++extern bool kmd_coloron;
++
+ inline bool IsCorner(Image<byte> &im, ImageRef ir, int nGate)
+ { // Does a quick check to see if a point in an image could be a grid corner.
+   // Does this by going around a 16-pixel ring, and checking that there's four
+@@ -105,7 +108,7 @@
+   return v2Ret;
+ }
+ 
+-bool CalibImage::MakeFromImage(Image<byte> &im)
++bool CalibImage::MakeFromImage(Image<byte> &im, Image<Rgb<byte> > &cim)
+ {
+   static gvar3<int> gvnCornerPatchSize("CameraCalibrator.CornerPatchPixelSize", 20, SILENT);
+   mvCorners.clear();
+@@ -113,6 +116,9 @@
+   
+   mim = im;
+   mim.make_unique();
++
++  // 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++  if (kmd_coloron) rgbmim = cim;
+   
+   // Find potential corners..
+   // This works better on a blurred image, so make a blurred copy
+diff -urN PTAM-r114-linux/CalibImage.h PTAM/CalibImage.h
+--- PTAM-r114-linux/CalibImage.h	2009-05-12 00:37:58.000000000 +0900
++++ PTAM/CalibImage.h	2010-10-13 00:38:56.000000000 +0900
+@@ -35,7 +35,7 @@
+ {
+ public:
+ 
+-  bool MakeFromImage(CVD::Image<CVD::byte> &im);
++  bool MakeFromImage(CVD::Image<CVD::byte> &im, CVD::Image<CVD::Rgb<CVD::byte> > &cim);
+   SE3<> mse3CamFromWorld;
+   void DrawImageGrid();
+   void Draw3DGrid(ATANCamera &Camera, bool bDrawErrors);
+@@ -51,6 +51,7 @@
+   std::vector<ErrorAndJacobians> Project(ATANCamera &Camera);
+ 
+   CVD::Image<CVD::byte> mim;
++  CVD::Image<CVD::Rgb<CVD::byte> >rgbmim;
+   
+ protected:
+   std::vector<CVD::ImageRef> mvCorners;
+diff -urN PTAM-r114-linux/CameraCalibrator.cc PTAM/CameraCalibrator.cc
+--- PTAM-r114-linux/CameraCalibrator.cc	2009-05-12 00:37:58.000000000 +0900
++++ PTAM/CameraCalibrator.cc	2010-10-13 01:31:20.000000000 +0900
+@@ -6,21 +6,56 @@
+ #include <fstream>
+ #include <stdlib.h>
+ 
++
+ using namespace CVD;
+ using namespace std;
+ using namespace GVars3;
+ 
+-int main()
++// 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++// To hand over the camera name
++bool kmd_coloron = false;
++string kmd_cameraname = "";
++
++// 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++// Parsing command-line options
++void kmd_parseoptions(int argc, char *argv[]) 
++{
++  int i = 0;
++  cout << "  KMD: parsing command line options ... " << endl;
++
++  for (i = 1; i < argc; i++) {
++    // cout << i << " " << argv[i] << endl;
++    if (string(argv[i]) == "-coloron") {
++      kmd_coloron = true;
++      cout << "  KMD: -coloron: Always show color images" << endl;
++      cout << "                 (to overccome the case GL_LUMINANCE does not work) ..." << endl;
++    } else {
++      kmd_cameraname = string(argv[i]);
++      cout << "  KMD: Camera-name is now set to \"" << kmd_cameraname << "\"" << endl;
++    }
++  }
++  return;
++}
++
++int main(int argc, char *argv[])
+ {
+   cout << "  Welcome to CameraCalibrator " << endl;
+   cout << "  -------------------------------------- " << endl;
+   cout << "  Parallel tracking and mapping for Small AR workspaces" << endl;
+   cout << "  Copyright (C) Isis Innovation Limited 2008 " << endl;
+   cout << endl;  
++
++  // 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++  cout << "  | You may try these options at command line (by Y.Kameda, 2010/10)" << endl;
++  cout << "  |   -coloron  ... If you unfortunately see black image, try this" << endl;
++  cout << "  |    0        ... Select 1st USB camera" << endl;
++  cout << "  |    1        ... Select 2nd USB camera (and 2 for 3rd, ...) " << endl;
++  cout << "  |    http://192.168.1.183/mjpg/video.mjpg ... network streaming " << endl;
++  cout << endl;  
++  kmd_parseoptions(argc, argv);
++
+   cout << "  Parsing calibrator_settings.cfg ...." << endl;
+-  
+   GUI.LoadFile("calibrator_settings.cfg");
+-
+   GUI.StartParserThread();
+   atexit(GUI.StopParserThread); // Clean up readline when program quits
+   
+@@ -94,10 +129,15 @@
+       if(!*mgvnOptimizing)
+ 	{
+ 	  GUI.ParseLine("CalibMenu.ShowMenu Live");
+-	  glDrawPixels(imFrameBW);
+-	  
++	  if (! kmd_coloron) {
++	    glRasterPos2i(0, 0);
++	    glDrawPixels(imFrameBW);
++	  } else {
++	    glRasterPos2i(0, 0);
++	    glDrawPixels(imFrameRGB.size().x, imFrameRGB.size().y, GL_RGB, GL_UNSIGNED_BYTE, imFrameRGB.data());
++	  }
+ 	  CalibImage c;
+-	  if(c.MakeFromImage(imFrameBW))
++	  if(c.MakeFromImage(imFrameBW, imFrameRGB))
+ 	    {
+ 	      if(mbGrabNextFrame)
+ 		{
+@@ -120,7 +160,13 @@
+ 	    nToShow = mvCalibImgs.size()-1;
+ 	  *mgvnShowImage = nToShow + 1;
+       
+-	  glDrawPixels(mvCalibImgs[nToShow].mim);
++	  if (! kmd_coloron) {
++	    glRasterPos2i(0, 0);
++	    glDrawPixels(mvCalibImgs[nToShow].mim);
++	  } else {
++	    glRasterPos2i(0, 0);
++	    glDrawPixels(mvCalibImgs[nToShow].rgbmim.size().x, mvCalibImgs[nToShow].rgbmim.size().y, GL_RGB, GL_UNSIGNED_BYTE, mvCalibImgs[nToShow].rgbmim.data());
++	  }
+ 	  mvCalibImgs[nToShow].Draw3DGrid(mCamera,true);
+ 	}
+       
+diff -urN PTAM-r114-linux/EyeGame.cc PTAM/EyeGame.cc
+--- PTAM-r114-linux/EyeGame.cc	2009-05-12 00:37:58.000000000 +0900
++++ PTAM/EyeGame.cc	2010-10-13 00:38:56.000000000 +0900
+@@ -5,6 +5,9 @@
+ 
+ using namespace CVD;
+ 
++// 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++extern bool kmd_lighton;
++
+ EyeGame::EyeGame()
+ {
+   mdEyeRadius = 0.1;
+@@ -24,7 +27,8 @@
+   glFrontFace(GL_CW);
+   glEnable(GL_DEPTH_TEST);
+   glDepthFunc(GL_LEQUAL);
+-  glEnable(GL_LIGHTING);
++  // 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++  if (kmd_lighton) glEnable(GL_LIGHTING);
+   glEnable(GL_LIGHT0);
+   glEnable(GL_NORMALIZE);
+   glEnable(GL_COLOR_MATERIAL);
+@@ -107,7 +111,7 @@
+   
+   double dSliceAngle = M_PI / (double)(nSlices);
+   double dSegAngle = 2.0 * M_PI / (double)(nSegments);
+-  
++
+   glColor3f(0.0,0.0,0.0);
+   {  // North pole:
+     double Z = sin(M_PI/2.0 - dSliceAngle);
+diff -urN PTAM-r114-linux/System.cc PTAM/System.cc
+--- PTAM-r114-linux/System.cc	2009-05-12 00:37:58.000000000 +0900
++++ PTAM/System.cc	2010-10-13 00:38:56.000000000 +0900
+@@ -87,7 +87,7 @@
+       bool bDrawMap = mpMap->IsGood() && *gvnDrawMap;
+       bool bDrawAR = mpMap->IsGood() && *gvnDrawAR;
+       
+-      mpTracker->TrackFrame(mimFrameBW, !bDrawAR && !bDrawMap);
++      mpTracker->TrackFrame(mimFrameBW, !bDrawAR && !bDrawMap, mimFrameRGB);
+       
+       if(bDrawMap)
+ 	mpMapViewer->DrawMap(mpTracker->GetCurrentPose());
+diff -urN PTAM-r114-linux/Tracker.cc PTAM/Tracker.cc
+--- PTAM-r114-linux/Tracker.cc	2010-01-29 11:06:14.000000000 +0900
++++ PTAM/Tracker.cc	2010-10-13 01:32:07.000000000 +0900
+@@ -23,6 +23,9 @@
+ using namespace std;
+ using namespace GVars3;
+ 
++// 2010/10/12 kameda[at]iit.tsukuba.ac.jp
++extern bool kmd_coloron;
++
+ // The constructor mostly sets up interal reference variables
+ // to the other classes..
+ Tracker::Tracker(ImageRef irVideoSize, const ATANCamera &c, Map &m, MapMaker &mm) : 
+@@ -83,7 +86,7 @@
+ // It figures out what state the tracker is in, and calls appropriate internal tracking
+ // functions. bDraw tells the tracker wether it should output any GL graphics
+ // or not (it should not draw, for example, when AR stuff is being shown.)
+-void Tracker::TrackFrame(Image<byte> &imFrame, bool bDraw)
++void Tracker::TrackFrame(Image<byte> &imFrame, bool bDraw, Image<CVD::Rgb<CVD::byte> > &rgbFrame)
+ {
+   mbDraw = bDraw;
+   mMessageForUser.str("");   // Wipe the user message clean
+@@ -114,7 +117,14 @@
+   
+   if(mbDraw)
+     {
+-      glDrawPixels(mCurrentKF.aLevels[0].im);
++      
++      if (! kmd_coloron) {
++        glRasterPos2i(0, 0);
++        glDrawPixels(mCurrentKF.aLevels[0].im);
++      } else {
++        glRasterPos2i(0, 0);
++        glDrawPixels(rgbFrame.size().x, rgbFrame.size().y, GL_RGB, GL_UNSIGNED_BYTE, rgbFrame.data());
++      }
+       if(GV2.GetInt("Tracker.DrawFASTCorners",0, SILENT))
+ 	{
+ 	  glColor3f(1,0,1);  glPointSize(1); glBegin(GL_POINTS);
+diff -urN PTAM-r114-linux/Tracker.h PTAM/Tracker.h
+--- PTAM-r114-linux/Tracker.h	2009-05-12 00:37:58.000000000 +0900
++++ PTAM/Tracker.h	2010-10-13 00:38:56.000000000 +0900
+@@ -45,7 +45,7 @@
+   Tracker(CVD::ImageRef irVideoSize, const ATANCamera &c, Map &m, MapMaker &mm);
+   
+   // TrackFrame is the main working part of the tracker: call this every frame.
+-  void TrackFrame(CVD::Image<CVD::byte> &imFrame, bool bDraw); 
++  void TrackFrame(CVD::Image<CVD::byte> &imFrame, bool bDraw, CVD::Image<CVD::Rgb<CVD::byte> > &rgbFrame); 
+ 
+   inline SE3<> GetCurrentPose() { return mse3CamFromWorld;}
+   
+diff -urN PTAM-r114-linux/main.cc PTAM/main.cc
+--- PTAM-r114-linux/main.cc	2008-09-26 03:07:27.000000000 +0900
++++ PTAM/main.cc	2010-10-13 00:38:56.000000000 +0900
+@@ -9,19 +9,58 @@
+ using namespace std;
+ using namespace GVars3;
+ 
+-int main()
++// 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++// To hand over the camera name
++bool kmd_coloron = false;
++bool kmd_lighton = true;
++string kmd_cameraname = "";
++
++// 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++// Parsing command-line options
++void kmd_parseoptions(int argc, char *argv[]) 
++{
++  int i = 0;
++  cout << "  KMD: parsing command line options ... " << endl;
++
++  for (i = 1; i < argc; i++) {
++    // cout << i << " " << argv[i] << endl;
++    if (string(argv[i]) == "-coloron") {
++      kmd_coloron = true;
++      cout << "  KMD: -coloron: Always show color images" << endl;
++      cout << "                 (to overccome the case GL_LUMINANCE does not work) ..." << endl;
++    } else if (string(argv[i]) == "-lightoff") {
++      kmd_lighton = false;
++      cout << "  KMD: -lightoff: Light turned off to avoid black eyes..." << endl;
++    } else {
++      kmd_cameraname = string(argv[i]);
++      cout << "  KMD: Camera-name is now set to \"" << kmd_cameraname << "\"" << endl;
++    }
++  }
++  return;
++}
++
++int main(int argc, char *argv[])
+ {
+   cout << "  Welcome to PTAM " << endl;
+   cout << "  --------------- " << endl;
+   cout << "  Parallel tracking and mapping for Small AR workspaces" << endl;
+   cout << "  Copyright (C) Isis Innovation Limited 2008 " << endl;  
+   cout << endl;
++
++  // 2010/10/06 kameda[at]iit.tsukuba.ac.jp
++  cout << "  | You may try these options at command line (by Y.Kameda, 2010/10)" << endl;
++  cout << "  |   -coloron  ... If you unfortunately see black image, try this" << endl;
++  cout << "  |   -lightoff ... If you want to avoid black eye-balls, try this" << endl;
++  cout << "  |    0        ... Select 1st USB camera" << endl;
++  cout << "  |    1        ... Select 2nd USB camera (and 2 for 3rd, ...) " << endl;
++  cout << endl;  
++  kmd_parseoptions(argc, argv);
++  
+   cout << "  Parsing settings.cfg ...." << endl;
+   GUI.LoadFile("settings.cfg");
+-  
+   GUI.StartParserThread(); // Start parsing of the console input
+   atexit(GUI.StopParserThread); 
+-  
++
+   try
+     {
+       System s;

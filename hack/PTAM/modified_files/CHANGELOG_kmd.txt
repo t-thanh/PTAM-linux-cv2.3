@@ -1,0 +1,13 @@
+(See CHANGELOG.txt too)
+------------------------------------------------------------------------
+Based on r114 | Yoshinari Kameda | 2010-10-13 01:42 JST | see-below
+  (1) Tested only on Linux / Ubuntu 10.04LTS with OpenCV 2.1.0
+  (2) Handle OpenCV video input (thanks to Arnaud GROSJEAN)
+  (3) make a switch option to call glDrawPixels(,, GL_RGB,,)
+  (4) make a switch option of glEnable(GL_LIGHTING)
+Patch and document should be available at
+http://www.kameda-lab.org/_local/imagelab.tsukuba.ac.jp/ubuntu1004+opencv21/PTAMk/index-e.html
+------------------------------------------------------------------------
+
+  
+
