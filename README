@@ -1,0 +1,12 @@
+PTAM: http://www.robots.ox.ac.uk/~gk/PTAM/
+
+This source code is based on the installation from kameda-lab (http://www.kameda-lab.org/_local/imagelab.tsukuba.ac.jp/ubuntu1004+opencv21/PTAMk/) with some modifications for OpenCV2.3.1
+
+All you need to do is move to PTAM-linux-go directory and run the script.
+(Or you can go all the steps manually by youself; see the script.)
+
+$ cd 
+$ cd PTAM-linux-go 
+$ bash ./PTAM-linux-go.bash 
+
+Modifications are placed in PTAM-linux-cv2.3/hack/PTAM/PTAM-r114-linux.patch
